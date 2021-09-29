@@ -1,6 +1,63 @@
-import { Server, WebSocket } from "ws";
+import { Server } from "ws";
 import * as admin from "firebase-admin";
 import * as path from "path";
+import * as dgram from "dgram";
+
+interface Remote {
+  address: string;
+  port: number;
+}
+
+class Rooms {
+  #map = new Map<string, Remote[]>();
+
+  join(roomName: string, remote: Remote): void {
+    const remotes = this.#map.get(roomName);
+
+    if (remotes === undefined) {
+      this.#map.set(roomName, [remote]);
+    } else {
+      remotes.push(remote);
+    }
+  }
+
+  getRemoteAddresses(roomName: string): Remote[] {
+    return this.#map.get(roomName) ?? [];
+  }
+}
+
+const rooms = new Rooms();
+
+const dgramSocket = dgram.createSocket("udp4");
+
+dgramSocket.on("message", (msg, rinfo) => {
+  const typedArray = new Uint8Array(msg);
+  const videoroomIdLength = typedArray[typedArray.length - 1]!;
+  const videoroomIdBytes = typedArray.subarray(
+    typedArray.length - videoroomIdLength - 1,
+    typedArray.length - 1
+  );
+  const textDecoder = new TextDecoder();
+  const videoroomId = textDecoder.decode(videoroomIdBytes);
+
+  const roomRemotes = rooms.getRemoteAddresses("videoroom:" + videoroomId);
+  for (const roomRemote of roomRemotes) {
+    if (
+      roomRemote.address !== rinfo.address ||
+      roomRemote.port !== rinfo.port
+    ) {
+      dgramSocket.send(
+        typedArray.subarray(0, typedArray.length - videoroomIdLength - 1),
+        roomRemote.port,
+        roomRemote.address
+      );
+    }
+  }
+});
+
+dgramSocket.bind(3000, "127.0.0.1", () => {
+  console.log(dgramSocket.address());
+});
 
 const app = admin.initializeApp({
   credential: admin.credential.cert(
@@ -15,27 +72,8 @@ const app = admin.initializeApp({
 
 const server = new Server({ port: 8000 });
 
-class Rooms {
-  #map = new Map<string, WebSocket[]>();
-
-  join(roomName: string, socket: WebSocket): void {
-    const sockets = this.#map.get(roomName);
-
-    if (sockets === undefined) {
-      this.#map.set(roomName, [socket]);
-    } else {
-      sockets.push(socket);
-    }
-  }
-
-  getSockets(roomName: string): WebSocket[] {
-    return this.#map.get(roomName) ?? [];
-  }
-}
-
-const rooms = new Rooms();
-
 server.on("connection", (socket) => {
+  // req.socket.remoteAddress
   socket.addEventListener("message", async (event) => {
     if (typeof event.data === "string") {
       const parsedData = JSON.parse(event.data);
@@ -53,7 +91,13 @@ server.on("connection", (socket) => {
         const decodedToken = await app.auth().verifyIdToken(parsedData.idToken);
 
         if (decodedToken.uid === slotData.uid) {
-          rooms.join("videoroom:" + parsedData.videoroomId, socket);
+          rooms.join("videoroom:" + parsedData.videoroomId, {
+            address: "127.0.0.1",
+            port: parsedData.datagramPort,
+          });
+          console.log("joined room", {
+            port: parsedData.datagramPort,
+          });
           socket.send(
             JSON.stringify({
               status: "ok",
@@ -63,24 +107,6 @@ server.on("connection", (socket) => {
           );
         } else {
           socket.send(JSON.stringify({ status: "error" }));
-        }
-      }
-    } else {
-      const typedArray = new Uint8Array(event.data as ArrayBuffer);
-      const videoroomIdLength = typedArray[typedArray.length - 1]!;
-      const videoroomIdBytes = typedArray.subarray(
-        typedArray.length - videoroomIdLength - 1,
-        typedArray.length - 1
-      );
-      const textDecoder = new TextDecoder();
-      const videoroomId = textDecoder.decode(videoroomIdBytes);
-
-      const sockets = rooms.getSockets("videoroom:" + videoroomId);
-      for (const roomSocket of sockets) {
-        if (roomSocket !== socket) {
-          roomSocket.send(
-            typedArray.subarray(0, typedArray.length - videoroomIdLength - 1)
-          );
         }
       }
     }
