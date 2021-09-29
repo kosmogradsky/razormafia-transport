@@ -8,7 +8,9 @@
     "sourceMap": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "target": "es2020"
+    "target": "es2020",
+    "resolveJsonModule": true,
+    "noPropertyAccessFromIndexSignature": true
   },
   "include": ["src"]
 }
