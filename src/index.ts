@@ -9,20 +9,36 @@ interface Remote {
 }
 
 class Rooms {
-  #map = new Map<string, Remote[]>();
+  #map = new Map<string, Set<Remote>>();
 
   join(roomName: string, remote: Remote): void {
     const remotes = this.#map.get(roomName);
 
     if (remotes === undefined) {
-      this.#map.set(roomName, [remote]);
+      this.#map.set(roomName, new Set([remote]));
     } else {
-      remotes.push(remote);
+      remotes.add(remote);
     }
   }
 
+  leave(roomName: string, remote: Remote): void {
+    const remotes = this.#map.get(roomName);
+
+    if (remotes === undefined) {
+      // do nothing
+    } else {
+      remotes.delete(remote);
+
+      if (remotes.size === 0) {
+        this.#map.delete(roomName);
+      }
+    }
+
+    console.log("left room", remote, this.#map);
+  }
+
   getRemotes(roomName: string): Remote[] {
-    return this.#map.get(roomName) ?? [];
+    return Array.from(this.#map.get(roomName) ?? []);
   }
 }
 
@@ -93,14 +109,14 @@ server.on("connection", (socket, req) => {
         const decodedToken = await app.auth().verifyIdToken(parsedData.idToken);
 
         if (decodedToken.uid === slotData.uid) {
-          rooms.join("videoroom:" + parsedData.videoroomId, {
+          const remote = {
             address: req.socket.remoteAddress!,
             port: parsedData.datagramPort,
-          });
-          console.log("joined room", {
-            address: req.socket.remoteAddress!,
-            port: parsedData.datagramPort,
-          });
+          };
+          rooms.join("videoroom:" + parsedData.videoroomId, remote);
+
+          console.log("joined room", remote);
+
           socket.send(
             JSON.stringify({
               status: "ok",
@@ -108,6 +124,10 @@ server.on("connection", (socket, req) => {
               slot: parsedData.slot,
             })
           );
+
+          socket.on("close", () => {
+            rooms.leave("videoroom:" + parsedData.videoroomId, remote);
+          });
         } else {
           socket.send(JSON.stringify({ status: "error" }));
         }
