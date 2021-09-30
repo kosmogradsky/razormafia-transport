@@ -21,7 +21,7 @@ class Rooms {
     }
   }
 
-  getRemoteAddresses(roomName: string): Remote[] {
+  getRemotes(roomName: string): Remote[] {
     return this.#map.get(roomName) ?? [];
   }
 }
@@ -34,18 +34,20 @@ dgramSocket.on("message", (msg, rinfo) => {
   const typedArray = new Uint8Array(msg);
   const videoroomIdLength = typedArray[typedArray.length - 1]!;
   const videoroomIdBytes = typedArray.subarray(
-    typedArray.length - videoroomIdLength - 1,
+    typedArray.length - 1 - videoroomIdLength,
     typedArray.length - 1
   );
   const textDecoder = new TextDecoder();
   const videoroomId = textDecoder.decode(videoroomIdBytes);
 
-  const roomRemotes = rooms.getRemoteAddresses("videoroom:" + videoroomId);
+  const roomRemotes = rooms.getRemotes("videoroom:" + videoroomId);
   for (const roomRemote of roomRemotes) {
     if (
-      roomRemote.address !== rinfo.address ||
-      roomRemote.port !== rinfo.port
+      roomRemote.address === rinfo.address &&
+      roomRemote.port === rinfo.port
     ) {
+      // do nothing
+    } else {
       dgramSocket.send(
         typedArray.subarray(0, typedArray.length - videoroomIdLength - 1),
         roomRemote.port,
@@ -70,9 +72,9 @@ const app = admin.initializeApp({
     "https://razormafia-e1ac2-default-rtdb.europe-west1.firebasedatabase.app",
 });
 
-const server = new Server({ port: 8000 });
+const server = new Server({ port: 8000, host: "127.0.0.1" });
 
-server.on("connection", (socket) => {
+server.on("connection", (socket, req) => {
   // req.socket.remoteAddress
   socket.addEventListener("message", async (event) => {
     if (typeof event.data === "string") {
@@ -92,10 +94,11 @@ server.on("connection", (socket) => {
 
         if (decodedToken.uid === slotData.uid) {
           rooms.join("videoroom:" + parsedData.videoroomId, {
-            address: "127.0.0.1",
+            address: req.socket.remoteAddress!,
             port: parsedData.datagramPort,
           });
           console.log("joined room", {
+            address: req.socket.remoteAddress!,
             port: parsedData.datagramPort,
           });
           socket.send(
